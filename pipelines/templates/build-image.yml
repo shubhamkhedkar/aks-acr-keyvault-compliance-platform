@@ -1,0 +1,49 @@
+parameters:
+  - name: serviceConnection
+    type: string
+  - name: imageName
+    type: string
+
+steps:
+  - checkout: self
+  - script: |
+      set -euo pipefail
+      docker build --pull \
+        --build-arg APP_VERSION=1.0.$(Build.BuildId) \
+        --build-arg GIT_COMMIT=$(Build.SourceVersion) \
+        -t ${{ parameters.imageName }}:$(Build.SourceVersion) .
+    displayName: docker build
+  - script: |
+      set -euo pipefail
+      mkdir -p build/reports
+      trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+        --format template --template "@contrib/junit.tpl" -o build/reports/trivy.xml \
+        ${{ parameters.imageName }}:$(Build.SourceVersion)
+      trivy image --format cyclonedx -o build/sbom.cdx.json ${{ parameters.imageName }}:$(Build.SourceVersion)
+    displayName: Trivy scan (fail on HIGH/CRITICAL) + SBOM
+  - script: IMAGE=${{ parameters.imageName }}:$(Build.SourceVersion) ./scripts/compliance-local.sh
+    displayName: InSpec image + manifest baselines
+  - task: AzureCLI@2
+    name: push
+    displayName: Push to private ACR (Entra ID token, no admin user)
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        acr="$(az acr list --resource-group rg-flagpost-prod --query '[0].loginServer' -o tsv)"
+        az acr login --name "${acr%%.*}"
+        tag="$acr/${{ parameters.imageName }}:$(Build.SourceVersion)"
+        docker tag ${{ parameters.imageName }}:$(Build.SourceVersion) "$tag"
+        docker push "$tag"
+        digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$tag")"
+        echo "##vso[task.setvariable variable=imageRef;isOutput=true]$digest"
+  - publish: build/sbom.cdx.json
+    artifact: sbom
+  - task: PublishTestResults@2
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: build/reports/trivy.xml
+      testRunTitle: Trivy

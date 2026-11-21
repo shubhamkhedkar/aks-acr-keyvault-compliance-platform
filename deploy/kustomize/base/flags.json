@@ -1,0 +1,22 @@
+{
+  "checkout-v2": {
+    "description": "New checkout flow, staged rollout",
+    "enabled": true,
+    "rollout_percent": 25,
+    "allow_tenants": ["contoso"],
+    "deny_tenants": ["fabrikam"],
+    "owner": "payments"
+  },
+  "dark-mode": {
+    "description": "Dark theme for the operator console",
+    "enabled": true,
+    "rollout_percent": 100,
+    "owner": "frontend"
+  },
+  "bulk-export": {
+    "description": "CSV export for large tenants",
+    "enabled": false,
+    "rollout_percent": 0,
+    "owner": "reporting"
+  }
+}

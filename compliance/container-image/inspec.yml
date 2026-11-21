@@ -1,0 +1,10 @@
+name: container-image
+title: Flagpost runtime image hardening
+maintainer: Shubham Khedkar
+copyright: Shubham Khedkar
+license: MIT
+summary: Runs against a local container (docker:// target) built from the Dockerfile before it is pushed to ACR.
+version: 1.0.0
+inspec_version: ">= 5.0"
+supports:
+  - platform: linux

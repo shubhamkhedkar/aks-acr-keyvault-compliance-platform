@@ -1,0 +1,132 @@
+# Flagpost delivery pipeline for Azure DevOps (Azure Pipelines).
+# PRs run the Validate stage only. main additionally builds and pushes the image to ACR,
+# plans + applies Terraform behind an approval, deploys to AKS and runs InSpec against Azure.
+#
+# Prerequisites (one-time, see README "Deploy it yourself"):
+#   - ARM service connection "sc-flagpost-prod" using workload identity federation (no secret)
+#   - self-hosted agent pool "flagpost-vnet-agents" inside the platform VNet (ACR, Key Vault
+#     and the AKS API server are private)
+#   - environments "flagpost-prod-infra" and "flagpost-prod" with approvals and checks
+#   - variable group "flagpost-prod" with TF_STATE_STORAGE_ACCOUNT, AZURE_SUBSCRIPTION_ID, AZURE_TENANT_ID
+#   - Key Vault-linked variable group "flagpost-inspec" with INSPEC_READER_CLIENT_ID/SECRET
+#     (a Reader-only principal; see pipelines/templates/inspec-azure.yml for why)
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    exclude: ["*.md", docs/*]
+
+pr:
+  branches:
+    include: [main]
+
+variables:
+  - group: flagpost-prod
+  - name: serviceConnection
+    value: sc-flagpost-prod
+  - name: imageName
+    value: flagpost
+  - name: tfDir
+    value: terraform/environments/prod
+  - name: isMain
+    value: ${{ eq(variables['Build.SourceBranch'], 'refs/heads/main') }}
+
+stages:
+  - stage: Validate
+    displayName: Validate (tests, lint, policy, mocked terraform)
+    jobs:
+      - job: offline_checks
+        displayName: Offline quality gates
+        pool:
+          vmImage: ubuntu-24.04
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - template: pipelines/templates/install-tools.yml
+          - script: ./scripts/check-all.sh
+            displayName: scripts/check-all.sh
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: build/reports/*.xml
+              testRunTitle: Validate
+
+  - stage: Build
+    displayName: Build, scan and push image
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables.isMain, true))
+    jobs:
+      - job: image
+        pool: flagpost-vnet-agents
+        steps:
+          - template: pipelines/templates/build-image.yml
+            parameters:
+              serviceConnection: $(serviceConnection)
+              imageName: $(imageName)
+
+  - stage: Infrastructure
+    displayName: Terraform plan + approved apply
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables.isMain, true))
+    jobs:
+      - job: plan
+        pool: flagpost-vnet-agents
+        steps:
+          - template: pipelines/templates/terraform.yml
+            parameters:
+              serviceConnection: $(serviceConnection)
+              workingDirectory: $(tfDir)
+              command: plan
+      - deployment: apply
+        dependsOn: plan
+        pool: flagpost-vnet-agents
+        environment: flagpost-prod-infra
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - download: current
+                  artifact: tfplan
+                - template: pipelines/templates/terraform.yml
+                  parameters:
+                    serviceConnection: $(serviceConnection)
+                    workingDirectory: $(tfDir)
+                    command: apply
+
+  - stage: Deploy
+    displayName: Deploy to AKS
+    dependsOn: [Build, Infrastructure]
+    condition: succeeded()
+    variables:
+      imageRef: $[ stageDependencies.Build.image.outputs['push.imageRef'] ]
+    jobs:
+      - deployment: aks
+        pool: flagpost-vnet-agents
+        environment: flagpost-prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - template: pipelines/templates/deploy-aks.yml
+                  parameters:
+                    serviceConnection: $(serviceConnection)
+                    workingDirectory: $(tfDir)
+                    imageRef: $(imageRef)
+
+  - stage: Verify
+    displayName: InSpec compliance against Azure
+    dependsOn: Deploy
+    condition: succeeded()
+    variables:
+      - group: flagpost-inspec
+    jobs:
+      - job: inspec
+        pool: flagpost-vnet-agents
+        steps:
+          - template: pipelines/templates/inspec-azure.yml
+            parameters:
+              workingDirectory: $(tfDir)

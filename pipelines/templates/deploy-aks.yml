@@ -1,0 +1,37 @@
+# Render the aks-prod overlay with values from Terraform outputs and the pushed digest,
+# gate it with the manifest InSpec profile, then apply with an Entra ID (kubelogin) token.
+parameters:
+  - name: serviceConnection
+    type: string
+  - name: workingDirectory
+    type: string
+  - name: imageRef
+    type: string
+
+steps:
+  - task: AzureCLI@2
+    displayName: Render, gate and apply to AKS
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      addSpnToEnvironment: true
+      inlineScript: |
+        set -euo pipefail
+        export ARM_USE_OIDC=true ARM_CLIENT_ID="$servicePrincipalId" ARM_TENANT_ID="$tenantId" ARM_OIDC_TOKEN="$idToken"
+        (cd ${{ parameters.workingDirectory }} && terraform init -input=false \
+          -backend-config="resource_group_name=rg-flagpost-tfstate" \
+          -backend-config="storage_account_name=$(TF_STATE_STORAGE_ACCOUNT)" \
+          -backend-config="container_name=tfstate" -backend-config="key=prod/platform.tfstate" \
+          -backend-config="use_azuread_auth=true" >/dev/null && terraform output -json) > tf-outputs.json
+        mkdir -p build
+        python3 scripts/render_aks_overlay.py tf-outputs.json "${{ parameters.imageRef }}" > build/aks-prod.yaml
+        docker run --rm -v "$PWD/compliance:/share/compliance:ro" -v "$PWD/build:/share/build:ro" -w /share \
+          cincproject/auditor:7.3.4 exec compliance/k8s-manifests --chef-license accept-silent --no-distinct-exit \
+          --input manifest_file=/share/build/aks-prod.yaml expect_csi=true
+        rg="$(jq -r .resource_group_name.value tf-outputs.json)"
+        aks="$(jq -r .aks_name.value tf-outputs.json)"
+        az aks get-credentials --resource-group "$rg" --name "$aks" --overwrite-existing
+        kubelogin convert-kubeconfig -l azurecli
+        kubectl apply --server-side --field-manager=azure-pipelines -f build/aks-prod.yaml
+        kubectl -n flagpost rollout status deploy/flagpost --timeout=300s

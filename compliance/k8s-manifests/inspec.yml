@@ -1,0 +1,17 @@
+name: k8s-manifests
+title: Flagpost rendered-manifest baseline
+maintainer: Shubham Khedkar
+copyright: Shubham Khedkar
+license: MIT
+summary: Pre-deploy gate run against `kustomize build` output; needs no cluster.
+version: 1.0.0
+inspec_version: ">= 5.0"
+supports:
+  - platform: os
+inputs:
+  - name: manifest_file
+    type: String
+    value: /share/build/aks-prod.yaml
+  - name: expect_csi
+    type: Boolean
+    value: true

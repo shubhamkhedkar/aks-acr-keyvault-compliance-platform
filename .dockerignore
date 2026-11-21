@@ -1,0 +1,5 @@
+*
+!app/requirements.txt
+!app/src/
+!app/seed/flags.json
+**/__pycache__

@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flagpost
+spec:
+  replicas: 3
+  template:
+    spec:
+      nodeSelector:
+        workload: apps
+      containers:
+        - name: flagpost
+          imagePullPolicy: Always
+          env:
+            - name: FLAGPOST_ENVIRONMENT
+              value: aks-prod

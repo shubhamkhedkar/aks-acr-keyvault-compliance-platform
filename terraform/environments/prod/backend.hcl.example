@@ -1,0 +1,6 @@
+# Copy to backend.hcl (git-ignored) after running scripts/bootstrap-tfstate.sh.
+resource_group_name  = "rg-flagpost-tfstate"
+storage_account_name = "stflagposttfstate<suffix>"
+container_name       = "tfstate"
+key                  = "prod/platform.tfstate"
+use_azuread_auth     = true

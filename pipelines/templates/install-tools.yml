@@ -1,0 +1,13 @@
+# Installs the pinned toolchain used by scripts/check-all.sh on a Microsoft-hosted agent.
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "3.13"
+  - script: ./scripts/install-ci-tools.sh "$(Agent.ToolsDirectory)/flagpost"
+    displayName: Install pinned CLI tools (checksum-verified)
+  - script: echo "##vso[task.prependpath]$(Agent.ToolsDirectory)/flagpost/bin"
+    displayName: Add tools to PATH
+  - script: |
+      python -m pip install --upgrade pip
+      pip install -r app/requirements-dev.txt -r requirements-ci.txt
+    displayName: Python dependencies

@@ -1,0 +1,26 @@
+# local state and generated output
+.local/
+build/
+.venv/
+__pycache__/
+*.pyc
+.coverage
+.pytest_cache/
+.ruff_cache/
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+tfplan.txt
+crash.log
+backend.hcl
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+
+# inspec
+compliance/**/vendor/

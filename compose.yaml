@@ -1,0 +1,38 @@
+# Local run of Flagpost with the same runtime constraints it has on AKS:
+# read-only root filesystem, no capabilities, non-root, and the API key
+# mounted as a file exactly where the Key Vault CSI driver puts it.
+# Prepare the token first: ./scripts/local-secrets.sh  (or `make up`).
+name: flagpost
+
+services:
+  flagpost:
+    build:
+      context: .
+      args:
+        APP_VERSION: 1.0.0
+    image: flagpost:local
+    environment:
+      FLAGPOST_ENVIRONMENT: local-compose
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=64m
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./.local/secrets-store:/mnt/secrets-store:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M

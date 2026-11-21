@@ -1,0 +1,38 @@
+# Post-deploy compliance: the azure-platform InSpec profile reads the live resources and
+# publishes JUnit results to the run.
+#
+# inspec-azure authenticates with the OAuth client-credentials flow only (no federated
+# tokens), so this stage uses a dedicated service principal that holds nothing but
+# Reader on rg-flagpost-prod. Its client ID/secret come from the Key Vault-linked
+# variable group "flagpost-inspec" (secret rotated every 90 days); they are passed
+# to the container as environment variables and never printed.
+parameters:
+  - name: workingDirectory
+    type: string
+
+steps:
+  - checkout: self
+  - script: |
+      set -euo pipefail
+      mkdir -p build/reports
+      tmp="$(mktemp -d)"
+      cp -r compliance/azure-platform "$tmp/"
+      docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$tmp/azure-platform:/p" -w /p \
+        cincproject/auditor:7.3.4 vendor . --overwrite --chef-license accept-silent
+      docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
+        -e AZURE_SUBSCRIPTION_ID -e AZURE_TENANT_ID -e AZURE_CLIENT_ID -e AZURE_CLIENT_SECRET \
+        -v "$tmp/azure-platform:/p:ro" -v "$PWD/build:/share/build" \
+        cincproject/auditor:7.3.4 exec /p -t azure:// --chef-license accept-silent \
+        --reporter cli junit2:/share/build/reports/inspec-azure.xml
+    displayName: cinc-auditor exec azure-platform (Reader-only principal)
+    env:
+      AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
+      AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+      AZURE_CLIENT_ID: $(INSPEC_READER_CLIENT_ID)
+      AZURE_CLIENT_SECRET: $(INSPEC_READER_CLIENT_SECRET)
+  - task: PublishTestResults@2
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: build/reports/inspec-azure.xml
+      testRunTitle: InSpec azure-platform
